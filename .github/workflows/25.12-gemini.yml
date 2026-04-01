@@ -71,7 +71,7 @@ jobs:
         sudo chown $USER:$GROUPS /workdir
         sudo -E apt-get -qq update
         DEPS=$(curl -fsSL https://raw.githubusercontent.com/ham-0915/N1-0325/refs/heads/main/N1/Immortalwrt/25.12/2512)
-        sudo -E apt-get -y install $DEPS ccache
+        sudo -E apt-get -qq install $DEPS ccache
         sudo timedatectl set-timezone "$TZ"
 
     - name: 克隆源码
@@ -95,7 +95,7 @@ jobs:
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
         ./scripts/feeds update -a && ./scripts/feeds install -a
 
-    - name: 加载 DIY 2 与配置 (核心修复步)
+    - name: 加载 DIY 2 与配置
       run: |
         # 建立软链接
         ln -sf $GITHUB_WORKSPACE/N1 openwrt/N1
