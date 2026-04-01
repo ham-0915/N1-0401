@@ -64,14 +64,12 @@ jobs:
     - name: 初始化编译环境
       run: |
         echo "::group::apt-get update"
-        sudo -E apt-get -qq update 2>&1 | tee /tmp/apt-update.log > /dev/null || \
-          { echo "::error::apt-get update 失败，详细日志如下："; cat /tmp/apt-update.log; exit 1; }
+        sudo -E apt-get -qq update || { echo "::error::apt-get update 失败"; exit 1; }
         echo "::endgroup::"
 
         echo "::group::apt-get install"
         DEPS=$(curl -fsSL https://raw.githubusercontent.com/ham-0915/N1-0325/refs/heads/main/N1/Immortalwrt/25.12/2512)
-        sudo -E apt-get -qq install $DEPS ccache 2>&1 | tee /tmp/apt-install.log > /dev/null || \
-          { echo "::error::apt-get install 失败，详细日志如下："; cat /tmp/apt-install.log; exit 1; }
+        sudo -E apt-get -qq install $DEPS ccache || { echo "::error::apt-get install 失败"; exit 1; }
         echo "::endgroup::"
 
         sudo timedatectl set-timezone "$TZ"
@@ -97,10 +95,8 @@ jobs:
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
         echo "::group::feeds update & install"
-        ./scripts/feeds update -a 2>&1 | tee /tmp/feeds-update.log > /dev/null || \
-          { echo "::error::feeds update 失败，详细日志如下："; cat /tmp/feeds-update.log; exit 1; }
-        ./scripts/feeds install -a 2>&1 | tee /tmp/feeds-install.log > /dev/null || \
-          { echo "::error::feeds install 失败，详细日志如下："; cat /tmp/feeds-install.log; exit 1; }
+        ./scripts/feeds update -a || { echo "::error::feeds update 失败"; exit 1; }
+        ./scripts/feeds install -a || { echo "::error::feeds install 失败"; exit 1; }
         echo "::endgroup::"
 
     - name: 加载 DIY 2 与配置
@@ -127,7 +123,7 @@ jobs:
         ccache -M 5G && ccache -z
 
         echo "::group::make 多线程编译"
-        make -j$(nproc) 2>&1 | tee /tmp/make-multi.log > /dev/null || {
+        make -j$(nproc) || {
           echo "::endgroup::"
           echo "::warning::多线程编译失败，切换单线程并输出详细日志..."
           make -j1 V=s || { echo "::error::单线程编译也失败了"; exit 1; }
@@ -202,4 +198,3 @@ jobs:
         delete_tags: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
