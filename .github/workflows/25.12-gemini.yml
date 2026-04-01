@@ -1,0 +1,180 @@
+name: 25.12-gemini
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  # --- 路径与配置 (如有变动仅需修改此处) ---
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-25.12
+  FEEDS_CONF: N1/Immortalwrt/25.12/TL-feeds.conf.default
+  CONFIG_FILE: N1/Immortalwrt/25.12/nan-25.12.config
+  DIY_P1_SH: N1/Immortalwrt/25.12/diy-part1.sh
+  DIY_P2_SH: N1/Immortalwrt/25.12/diy-part2.sh
+  FILES_DIR: N1/Immortalwrt/25.12/files
+  LOG_PATH: N1/Immortalwrt/25.12/logs.txt
+  TZ: Asia/Shanghai
+  UPLOAD_RELEASE: 'true'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+    - name: 检查服务器配置
+      run: |
+        echo "::group::硬件详情"
+        sudo lshw -short -C memory | grep GiB || free -h
+        echo "CPU核心数: $(nproc)"
+        df -hT /
+        echo "::endgroup::"
+
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 极致清理磁盘空间
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo apt-get -y purge azure-cli* google-cloud-sdk* Microsoft* dotnet* powershell* mongodb* mysql* php*
+        sudo apt-get autoremove --purge -y
+        sudo apt-get clean
+        df -h
+
+    - name: 最大化编译空间挂载
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 2048
+        swap-size-mb: 1024
+        build-mount-path: /workdir
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-docker-images: 'true'
+
+    - name: 初始化编译环境
+      run: |
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        sudo -E apt-get -qq update
+        DEPS=$(curl -fsSL https://raw.githubusercontent.com/ham-0915/N1-0325/refs/heads/main/N1/Immortalwrt/25.12/2512)
+        sudo -E apt-get -y install -y $DEPS ccache
+        sudo timedatectl set-timezone "$TZ"
+
+    - name: 克隆源码
+      working-directory: /workdir
+      run: |
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: 恢复 Ccache 缓存
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ hashFiles(env.CONFIG_FILE) }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
+
+    - name: 加载 DIY 1 与更新 Feeds
+      run: |
+        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
+        ./scripts/feeds update -a && ./scripts/feeds install -a
+
+    - name: 加载 DIY 2 与配置 (核心修复步)
+      run: |
+        # 建立软链接
+        ln -sf $GITHUB_WORKSPACE/N1 openwrt/N1
+        # 复制自定义文件
+        [ -e $FILES_DIR ] && cp -r $FILES_DIR openwrt/files
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: 下载软件包
+      working-directory: /workdir/openwrt
+      run: |
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: 编译固件
+      id: compile
+      working-directory: /workdir/openwrt
+      run: |
+        export PATH="/usr/lib/ccache:$PATH"
+        export CCACHE_DIR="$HOME/.ccache"
+        ccache -M 5G && ccache -z
+        # 优先多线程，失败则自动切换单线程输出详细日志
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 准备打包
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        mkdir -p /workdir/upload openwrt-armvirt
+        cp openwrt/bin/targets/*/*/*.tar.gz /workdir/upload/
+        mv openwrt/bin/targets/*/*/*.tar.gz openwrt-armvirt/
+        rm -rf /workdir/openwrt
+
+    - name: 打包 N1 内核
+      if: steps.compile.outputs.status == 'success'
+      uses: unifreq/openwrt_packit@master
+      env:
+        WHOAMI: ham
+        OPENWRT_ARMVIRT: openwrt-armvirt/*.tar.gz
+        PACKAGE_SOC: s905d
+        KERNEL_AUTO_LATEST: true
+        KERNEL_REPO_URL: breakingbadboy/OpenWrt
+        KERNEL_VERSION_NAME: 6.6.y
+
+    - name: 整理发布信息
+      id: release_info
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        [ -d /opt/openwrt_packit/output ] && mv /opt/openwrt_packit/output/* /workdir/upload/
+        DESC_FILE="/workdir/upload/release_description.txt"
+        echo "- **编译时间**：$(date '+%Y-%m-%d %H:%M')" > $DESC_FILE
+        echo "- **网关地址**：192.168.123.2" >> $DESC_FILE
+        echo "- **默认密码**：password" >> $DESC_FILE
+        echo "" >> $DESC_FILE
+        echo "### 更新日志" >> $DESC_FILE
+        # 自动读取仓库中的 logs.txt
+        if [ -f "${{ env.LOG_PATH }}" ]; then
+          cat "${{ env.LOG_PATH }}" >> $DESC_FILE
+        else
+          echo "- 常规更新发布" >> $DESC_FILE
+        fi
+        echo "release_tag=N1-25.12_$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+        echo "release_date=$(date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
+
+    - name: 上传发布
+      if: steps.compile.outputs.status == 'success'
+      uses: ncipollo/release-action@v1
+      with:
+        name: "OpenWrt-N1 ${{ steps.release_info.outputs.release_date }}"
+        tag: "${{ steps.release_info.outputs.release_tag }}"
+        artifacts: /workdir/upload/openwrt*
+        allowUpdates: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+        bodyFile: /workdir/upload/release_description.txt
+
+    - name: 清理运行记录
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 3
+        keep_minimum_runs: 5
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 清理旧版 Release
+      if: env.UPLOAD_RELEASE == 'true'
+      uses: dev-drprasad/delete-older-releases@master
+      with:
+        keep_latest: 7
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
