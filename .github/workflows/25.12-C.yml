@@ -1,0 +1,205 @@
+name: 25.12-C
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-25.12
+  FEEDS_CONF: N1/Immortalwrt/25.12/TL-feeds.conf.default
+  CONFIG_FILE: N1/Immortalwrt/25.12/nan-25.12.config
+  DIY_P1_SH: N1/Immortalwrt/25.12/diy-part1.sh
+  DIY_P2_SH: N1/Immortalwrt/25.12/diy-part2.sh
+  FILES_DIR: N1/Immortalwrt/25.12/files
+  LOG_PATH: N1/Immortalwrt/25.12/logs.txt
+  TZ: Asia/Shanghai
+  UPLOAD_RELEASE: 'true'
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+    - name: 检查Actions
+      uses: actions/checkout@v4
+
+    - name: 创建编译空间挂载点
+      run: |
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: 最大化编译空间
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 10240
+        swap-size-mb: 1024
+        build-mount-path: /workdir
+        overprovision-lvm: 'true'
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+
+    - name: 检查服务器配置
+      run: |
+        echo "::group::服务器配置信息"
+        echo "警告⚠ 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+        echo "云编译建议取消勾选Node.js及其相关插件！"
+        echo "已知CPU型号（降序）：8370C,8272CL,8171M,E5系列"
+        echo "--- CPU ---"
+        echo "CPU物理数量: $(cat /proc/cpuinfo | grep 'physical id' | sort | uniq | wc -l)"
+        echo "CPU核心及版本: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c)"
+        echo "--- 内存 ---"
+        sudo lshw -short -C memory | grep GiB
+        echo "--- 硬盘 ---"
+        df -Th
+        echo "::endgroup::"
+
+    - name: 初始化编译环境
+      run: |
+        echo "::group::apt-get update"
+        sudo -E apt-get -qq update 2>&1 | tee /tmp/apt-update.log > /dev/null || \
+          { echo "::error::apt-get update 失败，详细日志如下："; cat /tmp/apt-update.log; exit 1; }
+        echo "::endgroup::"
+
+        echo "::group::apt-get install"
+        DEPS=$(curl -fsSL https://raw.githubusercontent.com/ham-0915/N1-0325/refs/heads/main/N1/Immortalwrt/25.12/2512)
+        sudo -E apt-get -qq install $DEPS ccache 2>&1 | tee /tmp/apt-install.log > /dev/null || \
+          { echo "::error::apt-get install 失败，详细日志如下："; cat /tmp/apt-install.log; exit 1; }
+        echo "::endgroup::"
+
+        sudo timedatectl set-timezone "$TZ"
+
+    - name: 克隆源码
+      working-directory: /workdir
+      run: |
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: 恢复 Ccache 缓存
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ hashFiles(env.CONFIG_FILE) }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
+
+    - name: 加载 DIY 1 与更新 Feeds
+      run: |
+        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
+
+        echo "::group::feeds update & install"
+        ./scripts/feeds update -a 2>&1 | tee /tmp/feeds-update.log > /dev/null || \
+          { echo "::error::feeds update 失败，详细日志如下："; cat /tmp/feeds-update.log; exit 1; }
+        ./scripts/feeds install -a 2>&1 | tee /tmp/feeds-install.log > /dev/null || \
+          { echo "::error::feeds install 失败，详细日志如下："; cat /tmp/feeds-install.log; exit 1; }
+        echo "::endgroup::"
+
+    - name: 加载 DIY 2 与配置
+      run: |
+        ln -sf $GITHUB_WORKSPACE/N1 openwrt/N1
+        [ -e $FILES_DIR ] && cp -r $FILES_DIR openwrt/files
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: 下载软件包
+      working-directory: /workdir/openwrt
+      run: |
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: 编译固件
+      id: compile
+      working-directory: /workdir/openwrt
+      run: |
+        export PATH="/usr/lib/ccache:$PATH"
+        export CCACHE_DIR="$HOME/.ccache"
+        ccache -M 5G && ccache -z
+
+        echo "::group::make 多线程编译"
+        make -j$(nproc) 2>&1 | tee /tmp/make-multi.log > /dev/null || {
+          echo "::endgroup::"
+          echo "::warning::多线程编译失败，切换单线程并输出详细日志..."
+          make -j1 V=s || { echo "::error::单线程编译也失败了"; exit 1; }
+        }
+        echo "::endgroup::"
+
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 准备打包
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        mkdir -p /workdir/upload openwrt-armvirt
+        cp openwrt/bin/targets/*/*/*.tar.gz /workdir/upload/
+        mv openwrt/bin/targets/*/*/*.tar.gz openwrt-armvirt/
+        rm -rf /workdir/openwrt
+
+    - name: 打包 N1 内核
+      if: steps.compile.outputs.status == 'success'
+      uses: unifreq/openwrt_packit@master
+      env:
+        WHOAMI: ham
+        OPENWRT_ARMVIRT: openwrt-armvirt/*.tar.gz
+        PACKAGE_SOC: s905d
+        KERNEL_AUTO_LATEST: true
+        KERNEL_REPO_URL: breakingbadboy/OpenWrt
+        KERNEL_VERSION_NAME: 6.12.y
+
+    - name: 整理发布信息
+      id: release_info
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        [ -d /opt/openwrt_packit/output ] && mv /opt/openwrt_packit/output/* /workdir/upload/
+        DESC_FILE="/workdir/upload/release_description.txt"
+        {
+          echo "- **编译时间**：$(date '+%Y-%m-%d %H:%M')"
+          echo "- **网关地址**：192.168.123.2"
+          echo "- **默认密码**：password"
+          echo ""
+          echo "### 更新日志"
+          if [ -f "${{ env.LOG_PATH }}" ]; then
+            cat "${{ env.LOG_PATH }}"
+          else
+            echo "- 常规更新发布"
+          fi
+        } > $DESC_FILE
+        echo "release_tag=N1-25.12C_$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+        echo "release_date=$(date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
+
+    - name: 上传发布
+      if: steps.compile.outputs.status == 'success'
+      uses: ncipollo/release-action@v1
+      with:
+        name: "OpenWrt-N1 ${{ steps.release_info.outputs.release_date }}"
+        tag: "${{ steps.release_info.outputs.release_tag }}"
+        artifacts: /workdir/upload/openwrt*
+        allowUpdates: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+        bodyFile: /workdir/upload/release_description.txt
+
+    - name: 清理运行记录
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 3
+        keep_minimum_runs: 5
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 清理旧版 Release
+      if: env.UPLOAD_RELEASE == 'true'
+      uses: dev-drprasad/delete-older-releases@master
+      with:
+        keep_latest: 8
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
