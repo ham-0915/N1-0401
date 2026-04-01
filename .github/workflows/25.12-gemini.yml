@@ -47,7 +47,7 @@ jobs:
     - name: 最大化编译空间挂载
       uses: easimon/maximize-build-space@master
       with:
-        root-reserve-mb: 2048
+        root-reserve-mb: 8192
         swap-size-mb: 1024
         build-mount-path: /workdir
         remove-dotnet: 'true'
@@ -60,7 +60,7 @@ jobs:
         sudo chown $USER:$GROUPS /workdir
         sudo -E apt-get -qq update
         DEPS=$(curl -fsSL https://raw.githubusercontent.com/ham-0915/N1-0325/refs/heads/main/N1/Immortalwrt/25.12/2512)
-        sudo -E apt-get -y install -y $DEPS ccache
+        sudo -E apt-get -y install $DEPS ccache
         sudo timedatectl set-timezone "$TZ"
 
     - name: 克隆源码
