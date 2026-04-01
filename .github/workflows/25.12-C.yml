@@ -101,7 +101,6 @@ jobs:
 
     - name: 加载 DIY 2 与配置
       run: |
-        ln -sf $GITHUB_WORKSPACE/N1 openwrt/N1
         [ -e $FILES_DIR ] && cp -r $FILES_DIR openwrt/files
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
