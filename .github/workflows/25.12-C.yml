@@ -11,7 +11,7 @@ env:
   CONFIG_FILE: N1/Immortalwrt/25.12/nan-25.12.config
   DIY_P1_SH: N1/Immortalwrt/25.12/diy-part1.sh
   DIY_P2_SH: N1/Immortalwrt/25.12/diy-part2.sh
-  FILES_DIR: N1/Immortalwrt/25.12/files
+  CUSTOM_FILES_DIR: N1/Immortalwrt/25.12/files
   LOG_PATH: N1/Immortalwrt/25.12/logs.txt
   TZ: Asia/Shanghai
   UPLOAD_RELEASE: 'true'
@@ -101,7 +101,7 @@ jobs:
 
     - name: 加载 DIY 2 与配置
       run: |
-        [ -e $FILES_DIR ] && cp -r $FILES_DIR openwrt/files
+        [ -e $CUSTOM_FILES_DIR ] && cp -r $CUSTOM_FILES_DIR openwrt/files
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
