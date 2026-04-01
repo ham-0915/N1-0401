@@ -31,6 +31,8 @@ rm -rf feeds/luci/applications/luci-app-openlist2
 
 rm -rf feeds/luci/luci-app-mjpg-streamer
 rm -rf feeds/packages/onionshare-cli
+sed -i '/mjpg-streamer/d' .config 2>/dev/null || true
+sed -i '/onionshare/d' .config 2>/dev/null || true
 
 
 # 5. 克隆 Passwall 2
