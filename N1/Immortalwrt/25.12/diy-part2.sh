@@ -29,6 +29,9 @@ rm -rf feeds/luci/applications/luci-app-nikki
 rm -rf feeds/luci/applications/luci-app-openclash
 rm -rf feeds/luci/applications/luci-app-openlist2
 
+rm -rf feeds/luci/luci-app-mjpg-streamer
+rm -rf feeds/packages/onionshare-cli
+
 
 # 5. 克隆 Passwall 2
 git clone https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/passwall-packages
