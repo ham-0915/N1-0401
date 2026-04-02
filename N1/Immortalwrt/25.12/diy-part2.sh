@@ -59,31 +59,30 @@ if [ -f feeds/luci/modules/luci-compat/luasrc/view/cbi/tblsection.htm ]; then
 fi
 
 
-
-
-# 8. 修复nikki数据库下载失败的问题
+# 8. 修复 nikki 数据库下载失败的问题
 echo ">>> Preparing GeoSite.dat for Nikki..."
-# 自动定位 nikki 路径
-NIKKI_DIR=$(find . -name nikki -type d -path "*/luci-app-nikki" -o -path "*/nikki" | head -n 1)
 
-if [ -n "$NIKKI_DIR" ]; then
-    GEO_DIR="$NIKKI_DIR/root/etc/nikki/run"
+GEO_DIR="package/nikki/root/etc/nikki/run"
+
+if [ ! -d "package/nikki" ]; then
+    echo ">>> [!] 未找到 package/nikki，跳过 GeoSite.dat 部署"
+else
     mkdir -p "$GEO_DIR"
-    
+
     URL_PROXY="https://gh-proxy.org/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
     URL_FASTLY="https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
-    
+
     echo ">>> 尝试从代理地址下载 (URL1)..."
     if ! wget -t 3 -T 20 -nv -O "$GEO_DIR/GeoSite.dat" "$URL_PROXY"; then
         echo ">>> URL1 下载失败，尝试切换到 Fastly 镜像 (URL2)..."
         wget -t 5 -T 30 -nv -O "$GEO_DIR/GeoSite.dat" "$URL_FASTLY"
     fi
-    
+
     if [ -s "$GEO_DIR/GeoSite.dat" ]; then
         chmod 644 "$GEO_DIR/GeoSite.dat"
         echo ">>> GeoSite.dat 下载并部署成功."
     else
         echo ">>> [!] 警告: 所有下载地址均失效，请检查网络！"
-        exit 1  # 强制脚本报错退出，停止编译流程。
+        exit 1
     fi
 fi
