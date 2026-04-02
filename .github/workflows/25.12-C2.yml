@@ -1,21 +1,21 @@
-name: 25.12-gemini
+name: 25.12-C2
 
 on:
   repository_dispatch:
   workflow_dispatch:
 
 env:
-  # --- 路径与配置 (如有变动仅需修改此处) ---
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: N1/Immortalwrt/25.12/TL-feeds.conf.default
   CONFIG_FILE: N1/Immortalwrt/25.12/nan-25.12.config
   DIY_P1_SH: N1/Immortalwrt/25.12/diy-part1.sh
   DIY_P2_SH: N1/Immortalwrt/25.12/diy-part2.sh
-  FILES_DIR: N1/Immortalwrt/25.12/files
+  CUSTOM_FILES_DIR: N1/Immortalwrt/25.12/files
   LOG_PATH: N1/Immortalwrt/25.12/logs.txt
   TZ: Asia/Shanghai
   UPLOAD_RELEASE: 'true'
+  DEBIAN_FRONTEND: noninteractive
 
 jobs:
   build:
@@ -25,11 +25,17 @@ jobs:
       contents: write
 
     steps:
+    - name: 检查Actions
+      uses: actions/checkout@v4
+
     - name: 创建编译空间挂载点
       run: |
+        echo "::group::创建挂载点"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-        
+        echo "挂载点创建完成：/workdir"
+        echo "::endgroup::"
+
     - name: 最大化编译空间
       uses: easimon/maximize-build-space@master
       with:
@@ -43,42 +49,45 @@ jobs:
         remove-codeql: 'true'
         remove-docker-images: 'true'
 
-    - name: 检查Actions
-      uses: actions/checkout@v4
-      
-
     - name: 检查服务器配置
       run: |
-        echo "警告⚠"
-        echo "分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+        echo "::group::服务器配置信息"
+        echo "警告⚠ 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
         echo "云编译建议取消勾选Node.js及其相关插件！"
         echo "已知CPU型号（降序）：8370C,8272CL,8171M,E5系列"
-        echo "--------------------------CPU信息--------------------------"
-        echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
-        echo -e "CPU核心及版本信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
-        echo "--------------------------内存信息--------------------------"
-        echo "已安装内存详细信息："
+        echo "--- CPU ---"
+        echo "CPU物理数量: $(cat /proc/cpuinfo | grep 'physical id' | sort | uniq | wc -l)"
+        echo "CPU核心及版本: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c)"
+        echo "--- 内存 ---"
         sudo lshw -short -C memory | grep GiB
-        echo -e "\n"
-        echo "--------------------------硬盘信息--------------------------"
-        echo -e  "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l) \n"
-        echo "硬盘详情："
+        echo "--- 硬盘 ---"
         df -Th
+        echo "::endgroup::"
 
     - name: 初始化编译环境
       run: |
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
-        sudo -E apt-get -qq update
+        echo "::group::apt-get update"
+        sudo -E apt-get -qq update || { echo "::error::apt-get update 失败"; exit 1; }
+        echo "::endgroup::"
+
+        echo "::group::apt-get install"
         DEPS=$(curl -fsSL https://raw.githubusercontent.com/ham-0915/N1-0325/refs/heads/main/N1/Immortalwrt/25.12/2512)
-        sudo -E apt-get -qq install $DEPS ccache
+        sudo -E apt-get -qq install $DEPS ccache || { echo "::error::apt-get install 失败"; exit 1; }
+        echo "::endgroup::"
+
+        echo "::group::设置时区"
         sudo timedatectl set-timezone "$TZ"
+        echo "时区已设置为：$TZ"
+        echo "::endgroup::"
 
     - name: 克隆源码
       working-directory: /workdir
       run: |
+        echo "::group::克隆 ImmortalWrt 源码"
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        echo "源码克隆完成，分支：$REPO_BRANCH"
+        echo "::endgroup::"
 
     - name: 恢复 Ccache 缓存
       uses: actions/cache@v4
@@ -90,27 +99,41 @@ jobs:
 
     - name: 加载 DIY 1 与更新 Feeds
       run: |
-        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+        echo "::group::复制 feeds.conf.default"
+        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default && echo "已复制自定义 feeds 配置" || echo "未找到自定义 feeds 配置，使用默认"
         chmod +x $DIY_P1_SH
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
-        ./scripts/feeds update -a && ./scripts/feeds install -a
+        echo "::endgroup::"
+
+        echo "::group::feeds update & install"
+        ./scripts/feeds update -a || { echo "::error::feeds update 失败"; exit 1; }
+        ./scripts/feeds install -a || { echo "::error::feeds install 失败"; exit 1; }
+        echo "::endgroup::"
 
     - name: 加载 DIY 2 与配置
       run: |
-        # 建立软链接
-        ln -sf $GITHUB_WORKSPACE/N1 openwrt/N1
-        # 复制自定义文件
-        [ -e $FILES_DIR ] && cp -r $FILES_DIR openwrt/files
-        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        echo "::group::复制自定义文件与配置"
+        [ -e $CUSTOM_FILES_DIR ] && cp -r $CUSTOM_FILES_DIR openwrt/files && echo "已复制自定义 files 目录" || echo "未找到自定义 files 目录"
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config && echo "已复制 .config 配置文件" || echo "未找到配置文件"
         chmod +x $DIY_P2_SH
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
+        echo "::endgroup::"
 
     - name: 下载软件包
       working-directory: /workdir/openwrt
       run: |
+        echo "::group::make defconfig"
         make defconfig
+        echo "::endgroup::"
+
+        echo "::group::make download"
         make download -j8
+        echo "::endgroup::"
+
+        echo "::group::清理不完整下载包"
         find dl -size -1024c -exec rm -f {} \;
+        echo "清理完成"
+        echo "::endgroup::"
 
     - name: 编译固件
       id: compile
@@ -118,18 +141,32 @@ jobs:
       run: |
         export PATH="/usr/lib/ccache:$PATH"
         export CCACHE_DIR="$HOME/.ccache"
+
+        echo "::group::初始化 ccache"
         ccache -M 5G && ccache -z
-        # 优先多线程，失败则自动切换单线程输出详细日志
-        make -j$(nproc) || make -j1 V=s
+        echo "::endgroup::"
+
+        echo "::group::make 多线程编译"
+        make -j$(nproc) || {
+          echo "::endgroup::"
+          echo "::warning::多线程编译失败，切换单线程并输出详细日志..."
+          echo "::group::make 单线程编译（详细日志）"
+          make -j1 V=s || { echo "::error::单线程编译也失败了"; exit 1; }
+        }
+        echo "::endgroup::"
+
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 准备打包
       if: steps.compile.outputs.status == 'success'
       run: |
+        echo "::group::整理编译产物"
         mkdir -p /workdir/upload openwrt-armvirt
         cp openwrt/bin/targets/*/*/*.tar.gz /workdir/upload/
         mv openwrt/bin/targets/*/*/*.tar.gz openwrt-armvirt/
         rm -rf /workdir/openwrt
+        echo "打包准备完成"
+        echo "::endgroup::"
 
     - name: 打包 N1 内核
       if: steps.compile.outputs.status == 'success'
@@ -146,21 +183,25 @@ jobs:
       id: release_info
       if: steps.compile.outputs.status == 'success'
       run: |
+        echo "::group::生成 Release 描述文件"
         [ -d /opt/openwrt_packit/output ] && mv /opt/openwrt_packit/output/* /workdir/upload/
         DESC_FILE="/workdir/upload/release_description.txt"
-        echo "- **编译时间**：$(date '+%Y-%m-%d %H:%M')" > $DESC_FILE
-        echo "- **网关地址**：192.168.123.2" >> $DESC_FILE
-        echo "- **默认密码**：password" >> $DESC_FILE
-        echo "" >> $DESC_FILE
-        echo "### 更新日志" >> $DESC_FILE
-        # 自动读取仓库中的 logs.txt
-        if [ -f "${{ env.LOG_PATH }}" ]; then
-          cat "${{ env.LOG_PATH }}" >> $DESC_FILE
-        else
-          echo "- 常规更新发布" >> $DESC_FILE
-        fi
+        {
+          echo "- **编译源码**：https://github.com/immortalwrt/immortalwrt/tree/openwrt-25.12"
+          echo "- **网关地址**：192.168.123.2"
+          echo "- **登录信息**：root/password"
+          echo ""
+          echo "### 更新日志"
+          if [ -f "${{ env.LOG_PATH }}" ]; then
+            cat "${{ env.LOG_PATH }}"
+          else
+            echo "- 常规更新发布"
+          fi
+        } > $DESC_FILE
         echo "release_tag=N1-25.12_$(date +%Y%m%d)" >> $GITHUB_OUTPUT
         echo "release_date=$(date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
+        echo "描述文件生成完成：$DESC_FILE"
+        echo "::endgroup::"
 
     - name: 上传发布
       if: steps.compile.outputs.status == 'success'
@@ -188,4 +229,3 @@ jobs:
         delete_tags: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
