@@ -157,9 +157,9 @@ jobs:
         [ -d /opt/openwrt_packit/output ] && mv /opt/openwrt_packit/output/* /workdir/upload/
         DESC_FILE="/workdir/upload/release_description.txt"
         {
-          echo "- **编译时间**：$(date '+%Y-%m-%d %H:%M')"
+          echo "- **编译源码**：https://github.com/immortalwrt/immortalwrt/tree/openwrt-25.12"
           echo "- **网关地址**：192.168.123.2"
-          echo "- **默认密码**：password"
+          echo "- **登录信息**：root/password"
           echo ""
           echo "### 更新日志"
           if [ -f "${{ env.LOG_PATH }}" ]; then
@@ -168,7 +168,7 @@ jobs:
             echo "- 常规更新发布"
           fi
         } > $DESC_FILE
-        echo "release_tag=N1-25.12C_$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+        echo "release_tag=N1-25.12_$(date +%Y%m%d)" >> $GITHUB_OUTPUT
         echo "release_date=$(date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
 
     - name: 上传发布
