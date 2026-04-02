@@ -199,7 +199,8 @@ jobs:
         {
           echo "- **编译源码**：https://github.com/immortalwrt/immortalwrt/tree/openwrt-25.12"
           echo "- **网关地址**：192.168.123.2"
-          echo "- **登录信息**：root/password"
+          echo "- **登录账户**：root"
+          echo "- **登录密码**：password"
           echo ""
           echo "### 更新日志"
           if [ -f "${{ env.LOG_PATH }}" ]; then
