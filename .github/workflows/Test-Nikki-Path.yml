@@ -1,0 +1,74 @@
+name: Test-Nikki-Path
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: 检查Actions
+      uses: actions/checkout@v4
+
+    - name: 克隆源码（仅顶层，不含历史）
+      run: |
+        git clone https://github.com/immortalwrt/immortalwrt \
+          -b openwrt-25.12 --depth=1 openwrt
+
+    - name: 加载 feeds
+      working-directory: openwrt
+      run: |
+        echo "::group::feeds update"
+        ./scripts/feeds update -a
+        echo "::endgroup::"
+        echo "::group::feeds install"
+        ./scripts/feeds install -a
+        echo "::endgroup::"
+
+    - name: 克隆 nikki（模拟 diy-part2 第6步）
+      working-directory: openwrt
+      run: |
+        rm -rf feeds/luci/applications/luci-app-nikki
+        git clone https://github.com/nikkinikki-org/OpenWrt-nikki --depth=1 package/nikki
+
+    - name: 验证 nikki 目录结构
+      working-directory: openwrt
+      run: |
+        echo "::group::package/nikki 顶层结构"
+        ls -la package/nikki/
+        echo "::endgroup::"
+
+        echo "::group::查找 root 目录"
+        find package/nikki -type d -name root
+        echo "::endgroup::"
+
+        echo "::group::查找 etc/nikki 相关路径"
+        find package/nikki -type d | grep -i nikki || echo "未找到 nikki 子目录"
+        echo "::endgroup::"
+
+        echo "::group::完整目录树（3层）"
+        find package/nikki -maxdepth 3 -type d
+        echo "::endgroup::"
+
+    - name: 测试写入 GeoSite.dat
+      working-directory: openwrt
+      run: |
+        GEO_DIR="package/nikki/root/etc/nikki/run"
+
+        echo ">>> 尝试创建目标路径：$GEO_DIR"
+        mkdir -p "$GEO_DIR"
+
+        echo ">>> 写入测试文件（跳过真实下载）"
+        echo "test" > "$GEO_DIR/GeoSite.dat"
+
+        if [ -s "$GEO_DIR/GeoSite.dat" ]; then
+          echo ">>> 路径验证成功：$GEO_DIR/GeoSite.dat 存在"
+        else
+          echo ">>> 路径验证失败"
+          exit 1
+        fi
+
+        echo "::group::最终路径确认"
+        ls -lh "$GEO_DIR/"
+        echo "::endgroup::"
