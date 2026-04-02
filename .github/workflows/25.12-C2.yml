@@ -1,4 +1,4 @@
-name: 25.12-C
+name: 25.12-C2
 
 on:
   repository_dispatch:
