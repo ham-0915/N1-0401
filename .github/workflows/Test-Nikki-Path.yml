@@ -39,19 +39,26 @@ jobs:
         ls -la package/nikki/
         echo "::endgroup::"
 
-        echo "::group::查找 root 目录"
-        find package/nikki -type d -name root
-        echo "::endgroup::"
-
-        echo "::group::查找 etc/nikki 相关路径"
-        find package/nikki -type d | grep -i nikki || echo "未找到 nikki 子目录"
-        echo "::endgroup::"
-
         echo "::group::完整目录树（3层）"
-        find package/nikki -maxdepth 3 -type d
+        find package/nikki -maxdepth 3 -type d | grep -v ".git"
         echo "::endgroup::"
 
-    - name: 测试写入 GeoSite.dat
+    - name: 查看 nikki Makefile 安装规则
+      working-directory: openwrt
+      run: |
+        echo "::group::所有 Makefile 路径"
+        find package/nikki -name Makefile | grep -v ".git"
+        echo "::endgroup::"
+
+        echo "::group::nikki/nikki/Makefile 完整内容"
+        cat package/nikki/nikki/Makefile || echo "Makefile 不存在"
+        echo "::endgroup::"
+
+        echo "::group::nikki 包内所有已有文件（非目录、非.git）"
+        find package/nikki -type f | grep -v ".git"
+        echo "::endgroup::"
+
+    - name: 测试写入 GeoSite.dat 并验证路径
       working-directory: openwrt
       run: |
         GEO_DIR="package/nikki/root/etc/nikki/run"
@@ -72,3 +79,4 @@ jobs:
         echo "::group::最终路径确认"
         ls -lh "$GEO_DIR/"
         echo "::endgroup::"
+        
