@@ -107,7 +107,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-ccache-
 
-    - name: 加载 DIY 1 与更新 Feeds
+    - name: 加载 DIY 1 与更新
       run: |
         echo "::group::复制 feeds.conf.default"
         [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default && echo "已复制自定义 feeds 配置" || echo "未找到自定义 feeds 配置，使用默认"
